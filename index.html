@@ -1,0 +1,824 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="KasirLokal">
+<meta name="theme-color" content="#0a6b5d">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>KasirLokal</title>
+<style>
+/* Layout: header + konten + tab bawah. Kasir = grid produk di kiri, keranjang di kanan (iPad), keranjang jadi lembar bawah di layar sempit. */
+:root{
+  --bg:#eef1f4; --surface:#ffffff; --ink:#15202b; --muted:#5b6876; --line:#d5dbe2;
+  --accent:#0a6b5d; --accent-ink:#ffffff; --accent-soft:#dff3ee;
+  --warn:#8a4f00; --warn-bg:#fff1d6; --bad:#b3261e; --bad-bg:#fde8e6;
+  --shadow:0 1px 2px rgba(15,25,35,.08);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#0f161d; --surface:#18222c; --ink:#e7edf3; --muted:#9aa8b6; --line:#2b3947;
+    --accent:#3cc2ab; --accent-ink:#06211c; --accent-soft:#12332d;
+    --warn:#f0b455; --warn-bg:#3a2a0b; --bad:#ff8a80; --bad-bg:#3b1613;
+    --shadow:none; color-scheme:dark;
+  }
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:16px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif;
+  -webkit-text-size-adjust:100%;touch-action:manipulation}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer}
+h1,h2,h3{margin:0}
+h2{font-size:1.25rem;margin-bottom:12px}
+h3{font-size:1rem}
+.num{font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)}
+.app{display:flex;flex-direction:column;height:100%}
+.top{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:calc(10px + env(safe-area-inset-top)) max(16px,env(safe-area-inset-left)) 10px max(16px,env(safe-area-inset-right));
+  background:var(--surface);border-bottom:1px solid var(--line)}
+.top h1{font-size:1.1rem;font-weight:700;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.net{font-size:.8rem;color:var(--muted);display:flex;align-items:center;gap:6px;white-space:nowrap}
+.net i{width:8px;height:8px;border-radius:50%;background:var(--accent);display:inline-block}
+.net.off i{background:var(--warn)}
+#banner:empty{display:none}
+.banner{margin:12px max(16px,env(safe-area-inset-left)) 0 max(16px,env(safe-area-inset-right));padding:10px 12px;border-radius:10px;
+  background:var(--warn-bg);color:var(--warn);display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.banner.bad{background:var(--bad-bg);color:var(--bad)}
+main{flex:1;overflow:auto;padding:12px max(16px,env(safe-area-inset-left)) 16px max(16px,env(safe-area-inset-right));-webkit-overflow-scrolling:touch}
+.tabs{display:grid;grid-template-columns:repeat(5,1fr);background:var(--surface);border-top:1px solid var(--line);
+  padding-bottom:env(safe-area-inset-bottom)}
+.tabs button{background:none;border:0;padding:14px 4px;font-size:.85rem;color:var(--muted);border-top:3px solid transparent;min-height:48px}
+.tabs button.on{color:var(--accent);font-weight:700;border-top-color:var(--accent)}
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:11px 16px;min-height:44px;font-weight:600}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.btn.danger{color:var(--bad);border-color:var(--bad)}
+.btn.ghost{background:transparent}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.sm{padding:6px 12px;min-height:36px;font-size:.9rem}
+input[type=text],input[type=search],input[type=date],input:not([type]),input[inputmode]{
+  width:100%;border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:11px 12px;min-height:44px}
+label{display:flex;flex-direction:column;gap:6px;font-size:.9rem;color:var(--muted);margin:12px 0}
+label.check{flex-direction:row;align-items:center;gap:10px;color:var(--ink)}
+label.check input{width:22px;height:22px}
+.row{display:flex;gap:10px;margin-top:16px}
+.row>*{flex:1}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px;box-shadow:var(--shadow)}
+.stack{display:flex;flex-direction:column;gap:12px}
+.chips{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px}
+.chip{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:7px 14px;white-space:nowrap;min-height:38px}
+.chip.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+
+/* Kasir */
+.pos{display:grid;gap:16px;grid-template-columns:minmax(0,1fr)}
+@media (min-width:900px){.pos{grid-template-columns:minmax(0,1fr) 360px;align-items:start}}
+.tools{display:flex;flex-direction:column;gap:10px;margin-bottom:12px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}
+.tile{position:relative;text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:12px;
+  padding:12px;min-height:86px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;box-shadow:var(--shadow)}
+.tile:active{background:var(--accent-soft)}
+.tile b{font-weight:600;overflow-wrap:anywhere}
+.tile span{color:var(--accent);font-weight:700}
+.tile .badge{position:absolute;top:8px;right:8px;background:var(--accent);color:var(--accent-ink);border-radius:999px;min-width:26px;height:26px;
+  display:flex;align-items:center;justify-content:center;font-size:.85rem;font-weight:700;padding:0 6px}
+.cart{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px}
+@media (min-width:900px){.cart{position:sticky;top:0}}
+@media (max-width:899px){
+  .cart{display:none}
+  .cart.open{display:flex;position:fixed;left:0;right:0;bottom:0;max-height:85%;overflow:auto;z-index:20;border-radius:16px 16px 0 0;
+    padding-bottom:calc(14px + env(safe-area-inset-bottom));box-shadow:0 -8px 30px rgba(0,0,0,.35)}
+}
+.cart-head{display:flex;justify-content:space-between;align-items:center}
+.cart-head .close{display:none}
+@media (max-width:899px){.cart-head .close{display:inline-block}}
+.line{display:grid;grid-template-columns:1fr auto;gap:4px 10px;padding:8px 0;border-top:1px solid var(--line)}
+.line:first-of-type{border-top:0}
+.qty{display:flex;align-items:center;gap:8px;grid-column:1 / -1}
+.qty button{width:40px;height:40px;border-radius:10px;border:1px solid var(--line);background:var(--surface);font-size:1.2rem;font-weight:700}
+.qty .n{min-width:28px;text-align:center;font-weight:700}
+.qty .rm{margin-left:auto;width:auto;padding:0 12px;font-size:.85rem;color:var(--bad);font-weight:600}
+.total-line{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.big{font-size:1.7rem}
+.cartbar{display:none}
+@media (max-width:899px){
+  .cartbar.show{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:0 max(16px,env(safe-area-inset-left)) 10px max(16px,env(safe-area-inset-right));
+    background:var(--accent);color:var(--accent-ink);border-radius:12px;padding:12px 16px;font-weight:700;border:0;width:auto}
+}
+
+/* Daftar */
+.list{display:flex;flex-direction:column;gap:8px}
+.item{display:flex;justify-content:space-between;align-items:center;gap:12px;text-align:left;width:100%;
+  background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px;min-height:56px}
+.item .l{min-width:0}
+.item .l b{display:block;overflow-wrap:anywhere}
+.item .r{text-align:right;white-space:nowrap}
+.pill{display:inline-block;font-size:.75rem;font-weight:700;border-radius:999px;padding:2px 9px;margin-left:6px;vertical-align:middle}
+.pill.ok{background:var(--accent-soft);color:var(--accent)}
+.pill.warn{background:var(--warn-bg);color:var(--warn)}
+.pill.bad{background:var(--bad-bg);color:var(--bad)}
+.pill.off{background:var(--line);color:var(--muted)}
+.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+.toolbar input[type=date]{width:auto}
+.stats{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.stat small{display:block;color:var(--muted)}
+.stat strong{font-size:1.3rem}
+table{width:100%;border-collapse:collapse}
+th,td{padding:8px 4px;text-align:left;border-bottom:1px solid var(--line)}
+th{font-size:.8rem;color:var(--muted);font-weight:600}
+td.r,th.r{text-align:right}
+.empty{padding:28px 12px;text-align:center;color:var(--muted)}
+
+/* Modal */
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:flex-end;justify-content:center;z-index:50}
+.modal[hidden]{display:none}
+.sheet{background:var(--surface);width:min(560px,100%);max-height:92%;overflow:auto;border-radius:16px 16px 0 0;
+  padding:18px max(16px,env(safe-area-inset-left)) calc(18px + env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-right))}
+@media (min-width:700px){.modal{align-items:center}.sheet{border-radius:16px;padding:20px}}
+.seg{display:grid;grid-template-columns:repeat(3,1fr);gap:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:12px 0}
+.seg button{background:var(--surface);border:0;padding:12px 4px;font-weight:600;min-height:46px}
+.seg button.on{background:var(--accent);color:var(--accent-ink)}
+.quick{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.change{padding:12px;border-radius:10px;background:var(--accent-soft);color:var(--accent);font-weight:700;display:flex;justify-content:space-between}
+.change.bad{background:var(--bad-bg);color:var(--bad)}
+.hint{font-size:.9rem;color:var(--muted);background:var(--bg);padding:10px 12px;border-radius:10px}
+.photo img{display:block;max-width:100%;max-height:260px;border-radius:10px;border:1px solid var(--line);margin-bottom:8px}
+.err{color:var(--bad);font-size:.9rem;margin:6px 0}
+.kv{display:flex;justify-content:space-between;gap:12px;padding:6px 0}
+.toast{position:fixed;left:50%;bottom:calc(90px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--ink);color:var(--bg);
+  padding:10px 16px;border-radius:10px;z-index:60;max-width:90%;text-align:center}
+.toast[hidden]{display:none}
+:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <header class="top">
+    <h1 id="biz">KasirLokal</h1>
+    <span class="net" id="net"><i></i><span>Siap</span></span>
+  </header>
+  <div id="banner"></div>
+  <main id="view"></main>
+  <button class="cartbar" id="cartbar" data-act="openCart" type="button"></button>
+  <nav class="tabs" id="tabs">
+    <button data-act="tab" data-v="kasir" type="button">Kasir</button>
+    <button data-act="tab" data-v="transaksi" type="button">Transaksi</button>
+    <button data-act="tab" data-v="produk" type="button">Produk</button>
+    <button data-act="tab" data-v="laporan" type="button">Laporan</button>
+    <button data-act="tab" data-v="setelan" type="button">Setelan</button>
+  </nav>
+</div>
+<div class="modal" id="modal" hidden><div class="sheet" id="sheet"></div></div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+/*LOGIC-START*/
+const METHODS = { cash: 'Tunai', qris: 'QRIS', transfer: 'Transfer' };
+const fmtNum = n => new Intl.NumberFormat('id-ID').format(Math.trunc(n));
+const rupiah = n => 'Rp' + fmtNum(n);
+function parseRupiah(s) {
+  const d = String(s == null ? '' : s).replace(/\D/g, '');
+  return d ? parseInt(d, 10) : 0;
+}
+// items: [{unitPrice, qty}] semua integer rupiah
+function calcTotal(items) {
+  return items.reduce((sum, i) => {
+    if (!Number.isInteger(i.unitPrice) || !Number.isInteger(i.qty) || i.unitPrice < 0 || i.qty < 1) {
+      throw new Error('Item tidak valid');
+    }
+    return sum + i.unitPrice * i.qty;
+  }, 0);
+}
+function calcChange(total, received) {
+  return received < total ? null : received - total;
+}
+function cashSuggestions(total) {
+  const set = new Set([total]);
+  for (const d of [5000, 10000, 20000, 50000, 100000]) {
+    const v = Math.ceil(total / d) * d;
+    if (v >= total) set.add(v);
+  }
+  return [...set].sort((a, b) => a - b).slice(0, 4);
+}
+function csvCell(v) {
+  let s = v == null ? '' : String(v);
+  if (typeof v === 'string' && /^[=+\-@]/.test(s)) s = "'" + s; // cegah formula di Excel
+  return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+function toCsv(rows) { return rows.map(r => r.map(csvCell).join(',')).join('\r\n'); }
+function summarize(txs) {
+  const out = { count: 0, voidCount: 0, confirmed: 0, pending: 0,
+    byMethod: { cash: { count: 0, total: 0 }, qris: { count: 0, total: 0 }, transfer: { count: 0, total: 0 } } };
+  for (const t of txs) {
+    if (t.transactionStatus === 'void') { out.voidCount++; continue; }
+    out.count++;
+    const m = out.byMethod[t.paymentMethod];
+    if (m) { m.count++; m.total += t.total; }
+    if (t.paymentStatus === 'pending') out.pending += t.total; else out.confirmed += t.total;
+  }
+  return out;
+}
+function dateKey(ts) {
+  const d = new Date(ts);
+  const p = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+}
+/*LOGIC-END*/
+
+/* ---------- Database (IndexedDB) ---------- */
+let db = null;
+function openDB() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open('kasirlokal', 1);
+    r.onupgradeneeded = () => {
+      const d = r.result;
+      d.createObjectStore('products', { keyPath: 'id' });
+      d.createObjectStore('transactions', { keyPath: 'id' }).createIndex('createdAt', 'createdAt');
+      d.createObjectStore('attachments', { keyPath: 'id' }).createIndex('transactionId', 'transactionId');
+      d.createObjectStore('settings', { keyPath: 'key' });
+    };
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+    r.onblocked = () => rej(new Error('Database terblokir. Tutup tab KasirLokal lain.'));
+  });
+}
+const req = r => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+function run(stores, mode, fn) {
+  return new Promise((res, rej) => {
+    const t = db.transaction(stores, mode);
+    t.oncomplete = () => res();
+    t.onerror = () => rej(t.error);
+    t.onabort = () => rej(t.error || new Error('Transaksi database dibatalkan'));
+    fn(t);
+  });
+}
+const getAll = s => req(db.transaction(s).objectStore(s).getAll());
+const getOne = (s, k) => req(db.transaction(s).objectStore(s).get(k));
+const putOne = (s, v) => run([s], 'readwrite', t => t.objectStore(s).put(v));
+const uid = p => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+/* ---------- State ---------- */
+const $ = (s, r = document) => r.querySelector(s);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const view = $('#view'), sheet = $('#sheet'), modal = $('#modal');
+let products = [];
+let settings = { biz: 'KasirLokal', lastBackupAt: null };
+let txCount = 0;
+const cart = new Map();
+const ui = { tab: 'kasir', search: '', cat: 'Semua', txDate: dateKey(Date.now()), txFilter: 'all', repDate: dateKey(Date.now()) };
+let co = null;            // state checkout
+let modalUrls = [];       // object URL yang harus dilepas saat modal ditutup
+let persistGranted = null;
+
+function toast(msg) {
+  const t = $('#toast'); t.textContent = msg; t.hidden = false;
+  clearTimeout(toast.h); toast.h = setTimeout(() => { t.hidden = true; }, 3500);
+}
+function fmtTime(ts) { return new Date(ts).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }); }
+function fmtDate(ts) { return new Date(ts).toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }); }
+function statusInfo(t) {
+  if (t.transactionStatus === 'void') return { label: 'Batal', cls: 'bad' };
+  if (t.paymentStatus === 'pending') return { label: 'Pending', cls: 'warn' };
+  if (t.paymentStatus === 'verified') return { label: 'Terverifikasi', cls: 'ok' };
+  return { label: 'Lunas', cls: 'ok' };
+}
+function openModal(html) { sheet.innerHTML = html; modal.hidden = false; }
+function closeModal() {
+  modal.hidden = true; sheet.innerHTML = '';
+  modalUrls.forEach(u => URL.revokeObjectURL(u)); modalUrls = [];
+  if (co && co.photo) URL.revokeObjectURL(co.photo.url);
+  co = null;
+}
+function confirmModal({ title, text, ok, danger, input }) {
+  return new Promise(resolve => {
+    sheet.innerHTML = `<h2>${esc(title)}</h2><p>${text}</p>` +
+      (input ? `<label>${esc(input)}<input type="text" id="cfIn" maxlength="120"></label>` : '') +
+      `<div class="row"><button class="btn ghost" id="cfNo" type="button">Kembali</button>` +
+      `<button class="btn ${danger ? 'danger' : 'primary'}" id="cfYes" type="button">${esc(ok)}</button></div>`;
+    $('#cfNo').onclick = () => resolve({ ok: false });
+    $('#cfYes').onclick = () => resolve({ ok: true, text: input ? $('#cfIn').value.trim() : '' });
+  });
+}
+
+/* ---------- Navigasi ---------- */
+function go(tab) {
+  ui.tab = tab;
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.v === tab));
+  ({ kasir: renderKasir, transaksi: renderTransaksi, produk: renderProduk, laporan: renderLaporan, setelan: renderSetelan })[tab]();
+  updateCartBar(); renderBanner();
+  view.scrollTop = 0;
+}
+function renderBanner() {
+  const b = $('#banner');
+  const week = 7 * 24 * 3600 * 1000;
+  const late = txCount > 0 && (!settings.lastBackupAt || Date.now() - settings.lastBackupAt > week);
+  if (late && ui.tab !== 'setelan') {
+    b.innerHTML = `<div class="banner"><span>${settings.lastBackupAt ? 'Backup terakhir lebih dari 7 hari lalu.' : 'Belum pernah backup.'} Data hanya ada di perangkat ini.</span>` +
+      `<button class="btn sm" data-act="tab" data-v="setelan" type="button">Backup sekarang</button></div>`;
+  } else b.innerHTML = '';
+}
+
+/* ---------- Kasir ---------- */
+function activeProducts() { return products.filter(p => p.active); }
+function renderKasir() {
+  view.innerHTML = `<div class="pos"><section><div class="tools">
+    <input type="search" id="q" placeholder="Cari produk" value="${esc(ui.search)}" data-input="search" autocomplete="off">
+    <div class="chips" id="cats"></div></div><div class="grid" id="grid"></div></section>
+    <aside class="cart" id="cart"></aside></div>`;
+  renderCats(); renderGrid(); renderCart();
+}
+function renderCats() {
+  const cats = ['Semua', ...new Set(activeProducts().map(p => p.category).filter(Boolean))];
+  if (!cats.includes(ui.cat)) ui.cat = 'Semua';
+  $('#cats').innerHTML = cats.map(c => `<button class="chip ${c === ui.cat ? 'on' : ''}" data-act="cat" data-v="${esc(c)}" type="button">${esc(c)}</button>`).join('');
+}
+function renderGrid() {
+  const q = ui.search.trim().toLowerCase();
+  const list = activeProducts().filter(p => (ui.cat === 'Semua' || p.category === ui.cat) && (!q || p.name.toLowerCase().includes(q)));
+  $('#grid').innerHTML = list.length ? list.map(p => {
+    const n = cart.get(p.id) || 0;
+    return `<button class="tile" data-act="add" data-id="${esc(p.id)}" type="button"><b>${esc(p.name)}</b><span class="num">${rupiah(p.price)}</span>${n ? `<i class="badge num">${n}</i>` : ''}</button>`;
+  }).join('') : `<div class="empty" style="grid-column:1/-1">${activeProducts().length ? 'Produk tidak ditemukan.' : 'Belum ada produk aktif. Tambah di tab Produk.'}</div>`;
+}
+function cartItems() {
+  const out = [];
+  for (const [id, qty] of cart) {
+    const p = products.find(x => x.id === id);
+    if (p) out.push({ productId: id, name: p.name, unitPrice: p.price, qty });
+  }
+  return out;
+}
+function renderCart() {
+  const el = $('#cart'); if (!el) return;
+  const items = cartItems();
+  const total = calcTotal(items);
+  el.innerHTML = `<div class="cart-head"><h3>Keranjang</h3><button class="btn sm ghost close" data-act="closeCart" type="button">Tutup</button></div>` +
+    (items.length ? items.map(i => `<div class="line"><b>${esc(i.name)}</b><span class="num">${rupiah(i.unitPrice * i.qty)}</span>
+      <div class="qty"><button data-act="dec" data-id="${esc(i.productId)}" type="button" aria-label="Kurangi">−</button><span class="n num">${i.qty}</span>
+      <button data-act="inc" data-id="${esc(i.productId)}" type="button" aria-label="Tambah">+</button>
+      <button class="rm" data-act="rm" data-id="${esc(i.productId)}" type="button">Hapus</button></div></div>`).join('')
+      : '<div class="empty">Keranjang kosong. Ketuk produk untuk menambah.</div>') +
+    `<div class="total-line"><span>Total</span><strong class="num big">${rupiah(total)}</strong></div>
+     <button class="btn primary" data-act="checkout" type="button" ${items.length ? '' : 'disabled'}>Bayar</button>` +
+    (items.length ? `<button class="btn ghost sm" data-act="clearCart" type="button">Kosongkan</button>` : '');
+}
+function updateCartBar() {
+  const bar = $('#cartbar'); const items = cartItems();
+  const count = items.reduce((s, i) => s + i.qty, 0);
+  if (ui.tab === 'kasir' && count) {
+    bar.className = 'cartbar show'; bar.innerHTML = `<span>${count} item</span><span class="num">${rupiah(calcTotal(items))} · Lihat keranjang</span>`;
+  } else { bar.className = 'cartbar'; bar.innerHTML = ''; }
+}
+function cartChanged() { renderCart(); if (ui.tab === 'kasir') renderGrid(); updateCartBar(); }
+
+/* ---------- Checkout ---------- */
+function openCheckout() {
+  const items = cartItems(); if (!items.length) return;
+  $('#cart').classList.remove('open');
+  co = { id: 'T' + dateKey(Date.now()).replace(/-/g, '') + '-' + Math.random().toString(36).slice(2, 8).toUpperCase(),
+    method: 'cash', received: 0, notes: '', photo: null, saving: false };
+  modal.hidden = false; renderCheckout();
+}
+function renderCheckout() {
+  const items = cartItems(); const total = calcTotal(items); const m = co.method;
+  let h = `<h2>Bayar</h2><div class="total-line"><span>Total</span><strong class="num big">${rupiah(total)}</strong></div>
+    <div class="seg">${Object.entries(METHODS).map(([k, v]) => `<button class="${k === m ? 'on' : ''}" data-act="setMethod" data-v="${k}" type="button">${v}</button>`).join('')}</div>`;
+  if (m === 'cash') {
+    h += `<label>Uang diterima<input id="cashIn" inputmode="numeric" autocomplete="off" placeholder="0" data-input="cash" value="${co.received ? fmtNum(co.received) : ''}"></label>
+      <div class="quick">${cashSuggestions(total).map(v => `<button class="chip" data-act="quick" data-v="${v}" type="button">${v === total ? 'Uang pas' : fmtNum(v)}</button>`).join('')}</div>
+      <div class="change" id="changeBox"></div>`;
+  } else {
+    h += `<p class="hint">Status transaksi <b>Pending</b> sampai Anda cek sendiri uang masuk di aplikasi bank atau e-wallet. Foto hanya catatan, bukan bukti verifikasi.</p><div class="photo" id="photoBox"></div>`;
+  }
+  h += `<label>Catatan (opsional)<input type="text" id="noteIn" data-input="note" maxlength="120" value="${esc(co.notes)}"></label>
+    <div class="row"><button class="btn ghost" data-act="closeModal" type="button">Batal</button>
+    <button class="btn primary" id="saveBtn" data-act="saveTx" type="button">Simpan transaksi</button></div>`;
+  sheet.innerHTML = h; updateCash(); renderPhotoBox();
+}
+function updateCash() {
+  if (!co) return;
+  const total = calcTotal(cartItems());
+  const btn = $('#saveBtn');
+  if (co.method === 'cash') {
+    const ch = calcChange(total, co.received);
+    const box = $('#changeBox');
+    if (box) {
+      box.className = 'change' + (co.received && ch === null ? ' bad' : '');
+      box.innerHTML = co.received ? (ch === null ? `<span>Kurang</span><span class="num">${rupiah(total - co.received)}</span>` : `<span>Kembalian</span><span class="num">${rupiah(ch)}</span>`)
+        : '<span>Kembalian</span><span class="num">Rp0</span>';
+    }
+    if (btn) btn.disabled = co.saving || ch === null;
+  } else if (btn) btn.disabled = co.saving;
+}
+function renderPhotoBox(err, busy) {
+  const box = $('#photoBox'); if (!box) return;
+  let h = '';
+  if (busy) h = '<p class="muted">Memproses foto…</p>';
+  else if (co.photo) {
+    h = `<img src="${co.photo.url}" alt="Pratinjau foto bukti"><p class="muted num">${Math.round(co.photo.blob.size / 1024)} KB · ${co.photo.w}×${co.photo.h}px</p>
+      <div class="row" style="margin-top:0"><label class="btn" style="margin:0;align-items:center;color:var(--ink)">Ganti foto<input type="file" id="photoIn" accept="image/*" hidden></label>
+      <button class="btn danger" data-act="photoClear" type="button">Hapus foto</button></div>`;
+  } else {
+    h = `<label class="btn" style="margin:0;align-items:center;color:var(--ink)">Ambil / pilih foto bukti (opsional)<input type="file" id="photoIn" accept="image/*" hidden></label>`;
+  }
+  if (err) h += `<p class="err">${esc(err)}</p>`;
+  box.innerHTML = h;
+}
+
+/* Foto: perkecil sisi terpanjang <=1600px, target <=300 KB */
+async function compressImage(file) {
+  if (!file.type.startsWith('image/')) throw new Error('Berkas bukan gambar.');
+  if (file.size > 25 * 1024 * 1024) throw new Error('Berkas terlalu besar (maks 25 MB).');
+  let src;
+  try { src = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
+  catch (e) {
+    src = await new Promise((res, rej) => {
+      const url = URL.createObjectURL(file); const img = new Image();
+      img.onload = () => { URL.revokeObjectURL(url); res(img); };
+      img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('Gambar tidak bisa dibaca.')); };
+      img.src = url;
+    });
+  }
+  const w = src.width || src.naturalWidth, h = src.height || src.naturalHeight;
+  if (!w || !h) throw new Error('Gambar tidak bisa dibaca.');
+  let scale = Math.min(1, 1600 / Math.max(w, h));
+  for (let a = 0; a < 4; a++) {
+    const cw = Math.max(1, Math.round(w * scale)), ch = Math.max(1, Math.round(h * scale));
+    const c = document.createElement('canvas'); c.width = cw; c.height = ch;
+    c.getContext('2d').drawImage(src, 0, 0, cw, ch);
+    for (const q of [0.82, 0.7, 0.58, 0.46]) {
+      const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', q));
+      if (!blob || !blob.size) throw new Error('Kompresi foto gagal. Coba lagi.');
+      if (blob.size <= 300 * 1024) { if (src.close) src.close(); return { blob, w: cw, h: ch }; }
+    }
+    scale *= 0.8;
+  }
+  throw new Error('Foto tidak bisa dikecilkan sampai 300 KB. Coba foto lain.');
+}
+
+async function saveCheckout() {
+  if (!co || co.saving) return;
+  const items = cartItems(); if (!items.length) return;
+  let total; try { total = calcTotal(items); } catch (e) { toast(e.message); return; }
+  let received = null, change = null;
+  if (co.method === 'cash') {
+    received = co.received; change = calcChange(total, received);
+    if (change === null) { toast('Uang diterima kurang.'); return; }
+  }
+  co.saving = true; updateCash();
+  const now = Date.now();
+  const tx = {
+    id: co.id, createdAt: now, subtotal: total, discount: 0, total,
+    paymentMethod: co.method, paymentStatus: co.method === 'cash' ? 'paid' : 'pending', transactionStatus: 'completed',
+    cashReceived: received, change, notes: co.notes.trim(), photoState: 'none',
+    items: items.map(i => ({ productId: i.productId, productNameSnapshot: i.name, unitPriceSnapshot: i.unitPrice, quantity: i.qty, lineSubtotal: i.unitPrice * i.qty }))
+  };
+  let att = null;
+  if (co.method !== 'cash' && co.photo) {
+    att = { id: 'A-' + co.id, transactionId: co.id, blob: co.photo.blob, mimeType: 'image/jpeg', sizeBytes: co.photo.blob.size, createdAt: now, localState: 'stored', backupId: null };
+    tx.photoState = 'stored';
+  }
+  try {
+    await run(['transactions', 'attachments'], 'readwrite', t => {
+      t.objectStore('transactions').put(tx);
+      if (att) t.objectStore('attachments').put(att);
+    });
+  } catch (e) {
+    co.saving = false; updateCash();
+    toast('Gagal menyimpan. Keranjang dipertahankan, coba lagi.');
+    return;
+  }
+  txCount++; cart.clear(); cartChanged();
+  if (co.photo) URL.revokeObjectURL(co.photo.url);
+  modalUrls.forEach(u => URL.revokeObjectURL(u)); modalUrls = []; co = null;
+  showReceipt(tx);
+}
+function showReceipt(tx) {
+  openModal(`<h2>Tersimpan</h2><p class="muted num">${esc(tx.id)} · ${fmtTime(tx.createdAt)}</p>` +
+    tx.items.map(i => `<div class="kv"><span>${i.quantity}× ${esc(i.productNameSnapshot)}</span><span class="num">${rupiah(i.lineSubtotal)}</span></div>`).join('') +
+    `<div class="kv"><b>Total</b><b class="num">${rupiah(tx.total)}</b></div>` +
+    (tx.paymentMethod === 'cash'
+      ? `<div class="change" style="margin-top:8px"><span>Kembalian</span><span class="num">${rupiah(tx.change)}</span></div>`
+      : `<p class="hint">${METHODS[tx.paymentMethod]} berstatus <b>Pending</b>. Verifikasi di tab Transaksi setelah uang masuk.</p>`) +
+    `<div class="row"><button class="btn primary" data-act="closeModal" type="button">Transaksi baru</button></div>`);
+  renderBanner();
+}
+
+/* ---------- Transaksi ---------- */
+async function renderTransaksi() {
+  view.innerHTML = `<div class="toolbar"><input type="date" id="txDate" data-input="txDate" value="${esc(ui.txDate)}">
+    <button class="btn sm ghost" data-act="txAllDates" type="button">Semua tanggal</button></div>
+    <div class="chips" id="txChips" style="margin-bottom:12px"></div><div class="list" id="txList"></div>`;
+  const filters = [['all', 'Semua'], ['cash', 'Tunai'], ['qris', 'QRIS'], ['transfer', 'Transfer'], ['pending', 'Pending'], ['void', 'Batal']];
+  $('#txChips').innerHTML = filters.map(([k, v]) => `<button class="chip ${ui.txFilter === k ? 'on' : ''}" data-act="txFilter" data-v="${k}" type="button">${v}</button>`).join('');
+  let list = (await getAll('transactions')).sort((a, b) => b.createdAt - a.createdAt);
+  if (ui.txDate) list = list.filter(t => dateKey(t.createdAt) === ui.txDate);
+  list = list.filter(t => {
+    switch (ui.txFilter) {
+      case 'cash': case 'qris': case 'transfer': return t.paymentMethod === ui.txFilter;
+      case 'pending': return t.paymentStatus === 'pending' && t.transactionStatus !== 'void';
+      case 'void': return t.transactionStatus === 'void';
+      default: return true;
+    }
+  });
+  if (ui.tab !== 'transaksi') return;
+  $('#txList').innerHTML = list.length ? list.map(t => {
+    const s = statusInfo(t);
+    const names = t.items.map(i => `${i.quantity}× ${i.productNameSnapshot}`).join(', ');
+    return `<button class="item" data-act="openTx" data-id="${esc(t.id)}" type="button"><span class="l"><b>${fmtTime(t.createdAt)} · ${METHODS[t.paymentMethod]}<span class="pill ${s.cls}">${s.label}</span>${t.photoState === 'stored' ? '<span class="pill off">Foto</span>' : ''}</b>
+      <small class="muted">${esc(names)}</small></span><span class="r num"><b>${rupiah(t.total)}</b></span></button>`;
+  }).join('') : '<div class="empty">Tidak ada transaksi.</div>';
+}
+async function openTx(id) {
+  const t = await getOne('transactions', id); if (!t) return;
+  const att = t.photoState === 'stored' ? await getOne('attachments', 'A-' + id) : null;
+  const s = statusInfo(t);
+  let photo = '';
+  if (att) { const u = URL.createObjectURL(att.blob); modalUrls.push(u); photo = `<div class="photo"><img src="${u}" alt="Foto bukti pembayaran"><p class="muted num">${Math.round(att.sizeBytes / 1024)} KB</p></div>`; }
+  else if (t.photoState === 'deleted') photo = '<p class="hint">Foto bukti sudah dihapus dari perangkat ini. Transaksi tetap tersimpan.</p>';
+  openModal(`<h2>${rupiah(t.total)}<span class="pill ${s.cls}">${s.label}</span></h2>
+    <p class="muted num">${esc(t.id)}<br>${fmtDate(t.createdAt)}, ${fmtTime(t.createdAt)} · ${METHODS[t.paymentMethod]}</p>` +
+    t.items.map(i => `<div class="kv"><span>${i.quantity}× ${esc(i.productNameSnapshot)} <small class="muted num">@${fmtNum(i.unitPriceSnapshot)}</small></span><span class="num">${rupiah(i.lineSubtotal)}</span></div>`).join('') +
+    (t.paymentMethod === 'cash' ? `<div class="kv"><span class="muted">Diterima</span><span class="num">${rupiah(t.cashReceived)}</span></div><div class="kv"><span class="muted">Kembalian</span><span class="num">${rupiah(t.change)}</span></div>` : '') +
+    (t.notes ? `<div class="kv"><span class="muted">Catatan</span><span>${esc(t.notes)}</span></div>` : '') +
+    (t.transactionStatus === 'void' ? `<p class="hint">Dibatalkan ${fmtTime(t.voidedAt)}${t.voidReason ? ': ' + esc(t.voidReason) : ''}</p>` : '') +
+    photo +
+    `<div class="stack" style="margin-top:16px">` +
+    (t.paymentStatus === 'pending' && t.transactionStatus !== 'void' ? `<button class="btn primary" data-act="verifyTx" data-id="${esc(id)}" type="button">Tandai terverifikasi (uang sudah masuk)</button>` : '') +
+    (att ? `<button class="btn" data-act="delPhoto" data-id="${esc(id)}" type="button">Hapus foto dari perangkat</button>` : '') +
+    (t.transactionStatus !== 'void' ? `<button class="btn danger" data-act="voidTx" data-id="${esc(id)}" type="button">Batalkan transaksi</button>` : '') +
+    `<button class="btn ghost" data-act="closeModal" type="button">Tutup</button></div>`);
+}
+async function afterTxChange(id) { await openTx(id); if (ui.tab === 'transaksi') renderTransaksi(); if (ui.tab === 'laporan') renderLaporan(); }
+
+/* ---------- Produk ---------- */
+function renderProduk() {
+  const list = [...products].sort((a, b) => (b.active - a.active) || a.name.localeCompare(b.name));
+  view.innerHTML = `<div class="toolbar"><button class="btn primary" data-act="prodNew" type="button">Tambah produk</button></div>
+    <p class="hint" style="margin-bottom:12px">Harga lama tetap aman: setiap transaksi menyimpan harga saat dijual.</p>
+    <div class="list">${list.length ? list.map(p => `<button class="item" data-act="prodEdit" data-id="${esc(p.id)}" type="button"><span class="l"><b>${esc(p.name)}${p.active ? '' : '<span class="pill off">Nonaktif</span>'}</b><small class="muted">${esc(p.category || 'Tanpa kategori')}</small></span><span class="r num"><b>${rupiah(p.price)}</b></span></button>`).join('') : '<div class="empty">Belum ada produk.</div>'}</div>`;
+}
+function openProductForm(p) {
+  const isNew = !p; p = p || { id: '', name: '', category: '', price: 0, active: true };
+  openModal(`<h2>${isNew ? 'Produk baru' : 'Ubah produk'}</h2>
+    <label>Nama<input type="text" id="pName" maxlength="60" value="${esc(p.name)}"></label>
+    <label>Kategori<input type="text" id="pCat" maxlength="30" placeholder="mis. Minuman" value="${esc(p.category)}"></label>
+    <label>Harga (Rp)<input id="pPrice" inputmode="numeric" autocomplete="off" value="${p.price ? fmtNum(p.price) : ''}" data-input="priceFmt"></label>
+    <label class="check"><input type="checkbox" id="pActive" ${p.active ? 'checked' : ''}> Tampil di layar kasir</label>
+    <p class="err" id="pErr"></p>
+    <div class="row"><button class="btn ghost" data-act="closeModal" type="button">Batal</button><button class="btn primary" data-act="prodSave" data-id="${esc(p.id)}" type="button">Simpan</button></div>` +
+    (isNew ? '' : `<div class="row"><button class="btn danger" data-act="prodDelete" data-id="${esc(p.id)}" type="button">Hapus produk</button></div>`));
+}
+async function saveProduct(id) {
+  const name = $('#pName').value.trim(), price = parseRupiah($('#pPrice').value);
+  if (!name) { $('#pErr').textContent = 'Nama wajib diisi.'; return; }
+  if (price < 1) { $('#pErr').textContent = 'Harga harus lebih dari 0.'; return; }
+  const now = Date.now();
+  const old = id ? products.find(x => x.id === id) : null;
+  const p = { id: id || uid('P'), name, category: $('#pCat').value.trim(), price, active: $('#pActive').checked, createdAt: old ? old.createdAt : now, updatedAt: now };
+  try { await putOne('products', p); } catch (e) { $('#pErr').textContent = 'Gagal menyimpan produk.'; return; }
+  products = await getAll('products'); closeModal(); toast('Produk tersimpan.'); renderProduk();
+}
+
+/* ---------- Laporan ---------- */
+async function reportTxs() {
+  return (await getAll('transactions')).filter(t => dateKey(t.createdAt) === ui.repDate).sort((a, b) => a.createdAt - b.createdAt);
+}
+async function renderLaporan() {
+  view.innerHTML = `<div class="toolbar"><input type="date" id="repDate" data-input="repDate" value="${esc(ui.repDate)}"></div><div id="rep" class="stack"></div>`;
+  const txs = await reportTxs(); if (ui.tab !== 'laporan') return;
+  const s = summarize(txs);
+  $('#rep').innerHTML = `<div class="stats">
+    <div class="card stat"><small>Uang terkonfirmasi</small><strong class="num">${rupiah(s.confirmed)}</strong></div>
+    <div class="card stat"><small>Pending</small><strong class="num">${rupiah(s.pending)}</strong></div>
+    <div class="card stat"><small>Transaksi</small><strong class="num">${s.count}</strong></div>
+    <div class="card stat"><small>Dibatalkan</small><strong class="num">${s.voidCount}</strong></div></div>
+    <div class="card"><h3 style="margin-bottom:8px">Per metode</h3><table><thead><tr><th>Metode</th><th class="r">Jumlah</th><th class="r">Total</th></tr></thead><tbody>
+    ${Object.entries(METHODS).map(([k, v]) => `<tr><td>${v}</td><td class="r num">${s.byMethod[k].count}</td><td class="r num">${rupiah(s.byMethod[k].total)}</td></tr>`).join('')}
+    </tbody></table><p class="muted" style="margin:8px 0 0;font-size:.85rem">Batal tidak dihitung. Pending belum masuk "terkonfirmasi" sampai Anda verifikasi.</p></div>
+    <div class="row" style="margin-top:0"><button class="btn" data-act="csvDay" type="button">Ekspor CSV tanggal ini</button><button class="btn" data-act="csvAll" type="button">Ekspor CSV semua</button></div>`;
+}
+function csvRows(txs) {
+  const rows = [['ID', 'Tanggal', 'Jam', 'Metode', 'Status Pembayaran', 'Status Transaksi', 'Total', 'Uang Diterima', 'Kembalian', 'Item', 'Catatan', 'Alasan Batal']];
+  for (const t of txs) rows.push([t.id, dateKey(t.createdAt), fmtTime(t.createdAt), METHODS[t.paymentMethod], t.paymentStatus, t.transactionStatus, t.total,
+    t.cashReceived == null ? '' : t.cashReceived, t.change == null ? '' : t.change,
+    t.items.map(i => `${i.quantity}x ${i.productNameSnapshot} @${i.unitPriceSnapshot}`).join('; '), t.notes || '', t.voidReason || '']);
+  return rows;
+}
+function download(name, text, type) {
+  const blob = new Blob([text], { type });
+  const url = URL.createObjectURL(blob); const a = document.createElement('a');
+  a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+async function exportCsv(all) {
+  const txs = (await getAll('transactions')).filter(t => all || dateKey(t.createdAt) === ui.repDate).sort((a, b) => a.createdAt - b.createdAt);
+  if (!txs.length) { toast('Tidak ada transaksi untuk diekspor.'); return; }
+  download(`kasirlokal-${all ? 'semua' : ui.repDate}.csv`, '﻿' + toCsv(csvRows(txs)), 'text/csv;charset=utf-8');
+  toast('CSV diunduh. Cek aplikasi Files.');
+}
+
+/* ---------- Setelan & Backup ---------- */
+async function renderSetelan() {
+  view.innerHTML = `<div class="stack">
+    <div class="card"><h3>Profil usaha</h3><label>Nama usaha<input type="text" id="bizIn" maxlength="40" value="${esc(settings.biz)}"></label>
+      <button class="btn" data-act="bizSave" type="button">Simpan nama</button></div>
+    <div class="card"><h3>Backup</h3>
+      <p class="muted" id="bkInfo"></p>
+      <p class="hint">Data tersimpan hanya di perangkat ini. Kalau HP atau iPad hilang atau data browser terhapus, data ikut hilang. Backup tiap minggu dan simpan berkasnya di tempat lain (Drive, WhatsApp ke diri sendiri, flashdisk).</p>
+      <div class="row"><button class="btn primary" data-act="backup" type="button" id="bkBtn">Buat backup sekarang</button></div>
+      <p class="muted" style="font-size:.85rem">Pemulihan dari backup belum ada di versi ini. Berkas backup berisi semua transaksi dan foto, jadi simpan baik-baik.</p></div>
+    <div class="card"><h3>Penyimpanan</h3><p class="muted" id="stInfo">Memeriksa…</p></div>
+    <div class="card"><h3>Tentang</h3><p class="muted">KasirLokal 0.1. Gratis, tanpa akun, tanpa server. Tanpa jaminan: pemakai bertanggung jawab atas backup datanya. Foto bukti bukan verifikasi pembayaran.</p></div></div>`;
+  const last = settings.lastBackupAt;
+  $('#bkInfo').textContent = last ? `Backup terakhir: ${fmtDate(last)}, ${fmtTime(last)}.` : 'Belum pernah backup.';
+  let st = persistGranted === true ? 'Penyimpanan permanen: aktif. ' : persistGranted === false ? 'Penyimpanan permanen: belum diberikan browser. Pasang aplikasi ke layar utama (Bagikan > Tambah ke Layar Utama) supaya data lebih aman. ' : '';
+  try {
+    if (navigator.storage && navigator.storage.estimate) {
+      const e = await navigator.storage.estimate();
+      st += `Terpakai ${(e.usage / 1048576).toFixed(1)} MB dari sekitar ${Math.round(e.quota / 1048576)} MB.`;
+    }
+  } catch (e) { /* abaikan */ }
+  const el = $('#stInfo'); if (el) el.textContent = st || 'Informasi penyimpanan tidak tersedia di browser ini.';
+}
+const sha256 = async text => {
+  if (!(window.crypto && crypto.subtle)) throw new Error('Backup butuh koneksi aman (https).');
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+};
+const blobToB64 = blob => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] || ''); r.onerror = () => rej(r.error); r.readAsDataURL(blob); });
+async function buildBackup() {
+  const [prods, txs, atts] = await Promise.all([getAll('products'), getAll('transactions'), getAll('attachments')]);
+  const attachments = [];
+  for (const a of atts) attachments.push({ id: a.id, transactionId: a.transactionId, mimeType: a.mimeType, sizeBytes: a.sizeBytes, createdAt: a.createdAt, dataBase64: await blobToB64(a.blob) });
+  const data = { products: prods, transactions: txs, attachments, settings: { biz: settings.biz } };
+  const checksum = await sha256(JSON.stringify(data));
+  const manifest = { app: 'KasirLokal', schema: 1, createdAt: new Date().toISOString(), counts: { products: prods.length, transactions: txs.length, attachments: attachments.length }, checksum };
+  const text = JSON.stringify({ manifest, data });
+  // Validasi: baca ulang hasil serialisasi
+  const back = JSON.parse(text);
+  if (await sha256(JSON.stringify(back.data)) !== back.manifest.checksum) throw new Error('Checksum backup tidak cocok.');
+  const c = back.manifest.counts;
+  if (c.products !== back.data.products.length || c.transactions !== back.data.transactions.length || c.attachments !== back.data.attachments.length) throw new Error('Jumlah data backup tidak cocok.');
+  const ids = new Set(back.data.transactions.map(t => t.id));
+  if (back.data.attachments.some(a => !ids.has(a.transactionId) || !a.dataBase64)) throw new Error('Ada foto tanpa transaksi atau tanpa isi.');
+  const attIds = new Set(back.data.attachments.map(a => a.transactionId));
+  if (back.data.transactions.some(t => t.photoState === 'stored' && !attIds.has(t.id))) throw new Error('Ada transaksi bertanda foto tapi fotonya tidak ditemukan.');
+  return { text, manifest };
+}
+async function doBackup() {
+  const btn = $('#bkBtn'); if (btn) { btn.disabled = true; btn.textContent = 'Membuat backup…'; }
+  try {
+    const { text, manifest } = await buildBackup();
+    const d = new Date(); const p = n => String(n).padStart(2, '0');
+    const name = `kasirlokal-backup-${dateKey(d)}-${p(d.getHours())}${p(d.getMinutes())}.json`;
+    download(name, text, 'application/json');
+    const c = manifest.counts;
+    const r = await confirmModal({ title: 'Berkas sudah tersimpan?', ok: 'Ya, sudah tersimpan',
+      text: `Backup lolos pemeriksaan (${c.transactions} transaksi, ${c.attachments} foto, ${Math.round(text.length / 1024)} KB). Cek di aplikasi Files, folder Unduhan, berkas <b>${esc(name)}</b>. Tanggal backup baru dicatat setelah Anda konfirmasi.` });
+    if (r.ok) { settings.lastBackupAt = Date.now(); await putOne('settings', { key: 'lastBackupAt', value: settings.lastBackupAt }); toast('Backup dicatat.'); }
+    closeModal();
+  } catch (e) {
+    toast('Backup gagal: ' + e.message);
+  } finally { if (ui.tab === 'setelan') renderSetelan(); renderBanner(); }
+}
+
+/* ---------- Event ---------- */
+const handlers = {
+  tab: b => go(b.dataset.v),
+  cat: b => { ui.cat = b.dataset.v; renderCats(); renderGrid(); },
+  add: b => { cart.set(b.dataset.id, (cart.get(b.dataset.id) || 0) + 1); cartChanged(); },
+  inc: b => { cart.set(b.dataset.id, (cart.get(b.dataset.id) || 0) + 1); cartChanged(); },
+  dec: b => { const n = (cart.get(b.dataset.id) || 0) - 1; if (n < 1) cart.delete(b.dataset.id); else cart.set(b.dataset.id, n); cartChanged(); },
+  rm: b => { cart.delete(b.dataset.id); cartChanged(); },
+  clearCart: () => { cart.clear(); cartChanged(); },
+  openCart: () => { const c = $('#cart'); if (c) c.classList.add('open'); },
+  closeCart: () => { const c = $('#cart'); if (c) c.classList.remove('open'); },
+  checkout: openCheckout,
+  setMethod: b => { co.method = b.dataset.v; renderCheckout(); },
+  quick: b => { co.received = parseInt(b.dataset.v, 10); const i = $('#cashIn'); if (i) i.value = fmtNum(co.received); updateCash(); },
+  photoClear: () => { if (co.photo) URL.revokeObjectURL(co.photo.url); co.photo = null; renderPhotoBox(); },
+  saveTx: saveCheckout,
+  closeModal: closeModal,
+  txFilter: b => { ui.txFilter = b.dataset.v; renderTransaksi(); },
+  txAllDates: () => { ui.txDate = ''; renderTransaksi(); },
+  openTx: b => openTx(b.dataset.id),
+  verifyTx: async b => {
+    const t = await getOne('transactions', b.dataset.id);
+    t.paymentStatus = 'verified'; t.verifiedAt = Date.now();
+    try { await putOne('transactions', t); toast('Ditandai terverifikasi.'); } catch (e) { toast('Gagal menyimpan.'); }
+    afterTxChange(t.id);
+  },
+  voidTx: async b => {
+    const id = b.dataset.id;
+    const r = await confirmModal({ title: 'Batalkan transaksi?', danger: true, ok: 'Ya, batalkan', input: 'Alasan (opsional)',
+      text: 'Transaksi tetap tercatat dengan status Batal dan tidak dihitung di laporan. Tidak bisa diurungkan.' });
+    if (r.ok) {
+      const t = await getOne('transactions', id);
+      t.transactionStatus = 'void'; t.voidedAt = Date.now(); t.voidReason = r.text;
+      try { await putOne('transactions', t); toast('Transaksi dibatalkan.'); } catch (e) { toast('Gagal menyimpan.'); }
+    }
+    afterTxChange(id);
+  },
+  delPhoto: async b => {
+    const id = b.dataset.id; const att = await getOne('attachments', 'A-' + id);
+    const backedUp = settings.lastBackupAt && att && settings.lastBackupAt >= att.createdAt;
+    const r = await confirmModal({ title: 'Hapus foto?', danger: true, ok: backedUp ? 'Hapus foto' : 'Hapus tanpa backup',
+      text: (backedUp ? 'Foto sudah tercakup di backup terakhir. ' : '<b>Foto ini belum ada di backup mana pun.</b> ') + 'Transaksinya tetap ada. Foto yang dihapus tidak bisa dikembalikan dari aplikasi ini.' });
+    if (r.ok) {
+      try {
+        await run(['transactions', 'attachments'], 'readwrite', t => {
+          t.objectStore('attachments').delete('A-' + id);
+          const rq = t.objectStore('transactions').get(id);
+          rq.onsuccess = () => { const tx = rq.result; tx.photoState = 'deleted'; t.objectStore('transactions').put(tx); };
+        });
+        toast('Foto dihapus.');
+      } catch (e) { toast('Gagal menghapus foto.'); }
+    }
+    afterTxChange(id);
+  },
+  prodNew: () => openProductForm(null),
+  prodEdit: b => openProductForm(products.find(p => p.id === b.dataset.id)),
+  prodSave: b => saveProduct(b.dataset.id),
+  prodDelete: async b => {
+    const id = b.dataset.id; const p = products.find(x => x.id === id);
+    const r = await confirmModal({ title: 'Hapus produk?', danger: true, ok: 'Hapus', text: `<b>${esc(p.name)}</b> dihapus dari daftar. Transaksi lama tidak berubah. Alternatif: matikan "Tampil di layar kasir".` });
+    if (r.ok) { cart.delete(id); await run(['products'], 'readwrite', t => t.objectStore('products').delete(id)); products = await getAll('products'); closeModal(); cartChanged(); renderProduk(); }
+    else openProductForm(p);
+  },
+  csvDay: () => exportCsv(false),
+  csvAll: () => exportCsv(true),
+  backup: doBackup,
+  bizSave: async () => {
+    const v = $('#bizIn').value.trim() || 'KasirLokal'; settings.biz = v;
+    await putOne('settings', { key: 'biz', value: v }); $('#biz').textContent = v; toast('Nama usaha disimpan.');
+  }
+};
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-act]');
+  if (b) { const h = handlers[b.dataset.act]; if (h) h(b, e); return; }
+  if (e.target === modal && !(co && co.saving)) closeModal();
+});
+document.addEventListener('input', e => {
+  const k = e.target.dataset && e.target.dataset.input; if (!k) return;
+  if (k === 'search') { ui.search = e.target.value; renderGrid(); }
+  else if (k === 'cash') { co.received = parseRupiah(e.target.value); e.target.value = co.received ? fmtNum(co.received) : ''; updateCash(); }
+  else if (k === 'note') { co.notes = e.target.value; }
+  else if (k === 'priceFmt') { const n = parseRupiah(e.target.value); e.target.value = n ? fmtNum(n) : ''; }
+  else if (k === 'txDate') { ui.txDate = e.target.value; renderTransaksi(); }
+  else if (k === 'repDate') { ui.repDate = e.target.value || dateKey(Date.now()); renderLaporan(); }
+});
+document.addEventListener('change', async e => {
+  if (e.target.id !== 'photoIn' || !co) return;
+  const file = e.target.files && e.target.files[0]; if (!file) return;
+  if (co.photo) { URL.revokeObjectURL(co.photo.url); co.photo = null; }
+  renderPhotoBox(null, true);
+  try {
+    const r = await compressImage(file);
+    if (!co) return;
+    co.photo = { blob: r.blob, w: r.w, h: r.h, url: URL.createObjectURL(r.blob) };
+    renderPhotoBox();
+  } catch (err) { if (co) renderPhotoBox(err.message || 'Foto gagal diproses.'); }
+});
+function netStatus() {
+  const n = $('#net'); const on = navigator.onLine;
+  n.className = 'net' + (on ? '' : ' off'); n.lastElementChild.textContent = on ? 'Siap' : 'Offline, tetap bisa jualan';
+}
+window.addEventListener('online', netStatus); window.addEventListener('offline', netStatus);
+
+/* ---------- Mulai ---------- */
+async function init() {
+  netStatus();
+  try { db = await openDB(); }
+  catch (e) {
+    view.innerHTML = `<div class="card"><h2>Database tidak bisa dibuka</h2><p>${esc(e.message || e)}</p><p class="muted">Data lama tidak disentuh. Tutup tab lain KasirLokal, muat ulang, atau coba keluar-masuk aplikasi. Jangan hapus data situs sebelum backup.</p></div>`;
+    return;
+  }
+  try {
+    for (const s of await getAll('settings')) settings[s.key] = s.value;
+    products = await getAll('products');
+    if (!products.length && !settings.seeded) {
+      const now = Date.now();
+      const seed = [['Es Kopi Susu', 'Minuman', 18000], ['Es Cokelat', 'Minuman', 20000], ['Kentang Goreng', 'Makanan', 15000]]
+        .map(([name, category, price]) => ({ id: uid('P'), name, category, price, active: true, createdAt: now, updatedAt: now }));
+      await run(['products', 'settings'], 'readwrite', t => { seed.forEach(p => t.objectStore('products').put(p)); t.objectStore('settings').put({ key: 'seeded', value: true }); });
+      settings.seeded = true; products = await getAll('products');
+      toast('Produk contoh ditambahkan. Ganti di tab Produk.');
+    }
+    txCount = await req(db.transaction('transactions').objectStore('transactions').count());
+  } catch (e) { toast('Gagal memuat data: ' + e.message); }
+  $('#biz').textContent = settings.biz || 'KasirLokal';
+  try { if (navigator.storage && navigator.storage.persist) persistGranted = await navigator.storage.persist(); } catch (e) { /* abaikan */ }
+  go('kasir');
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+init();
+</script>
+</body>
+</html>
