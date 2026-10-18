@@ -179,6 +179,7 @@ td.r,th.r{text-align:right}
 
 <script>
 /*LOGIC-START*/
+const VERSION = '0.2';
 const METHODS = { cash: 'Tunai', qris: 'QRIS', transfer: 'Transfer' };
 const fmtNum = n => new Intl.NumberFormat('id-ID').format(Math.trunc(n));
 const rupiah = n => 'Rp' + fmtNum(n);
@@ -223,6 +224,111 @@ function summarize(txs) {
     if (t.paymentStatus === 'pending') out.pending += t.total; else out.confirmed += t.total;
   }
   return out;
+}
+// Penjaga transisi status: kembalikan pesan kalau tidak boleh, null kalau boleh.
+function verifyBlocker(t) {
+  if (!t) return 'Transaksi tidak ditemukan.';
+  if (t.transactionStatus === 'void') return 'Transaksi sudah dibatalkan.';
+  if (t.paymentStatus !== 'pending') return 'Pembayaran ini tidak berstatus pending.';
+  return null;
+}
+function voidBlocker(t) {
+  if (!t) return 'Transaksi tidak ditemukan.';
+  if (t.transactionStatus === 'void') return 'Transaksi sudah dibatalkan.';
+  return null;
+}
+function b64ToBytes(s) {
+  const bin = atob(s);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+// Periksa seluruh isi backup SEBELUM menyentuh database. sha256fn(text) -> hex.
+async function validateBackup(obj, sha256fn) {
+  const errors = [];
+  const err = m => { if (errors.length < 8) errors.push(m); };
+  const isObj = v => v !== null && typeof v === 'object' && !Array.isArray(v);
+  const isInt = (v, min) => Number.isInteger(v) && v >= min;
+  const isStr = (v, max) => typeof v === 'string' && v.length <= max;
+  const notKL = ['Bukan berkas backup KasirLokal.'];
+  if (!isObj(obj) || !isObj(obj.manifest) || !isObj(obj.data)) return { ok: false, errors: notKL };
+  const m = obj.manifest, d = obj.data;
+  if (m.app !== 'KasirLokal') return { ok: false, errors: notKL };
+  if (m.schema !== 1) {
+    return { ok: false, errors: [typeof m.schema === 'number' && m.schema > 1 ? 'Backup dari versi aplikasi yang lebih baru. Perbarui KasirLokal dulu.' : 'Versi backup tidak dikenal.'] };
+  }
+  if (!Array.isArray(d.products) || !Array.isArray(d.transactions) || !Array.isArray(d.attachments) || !isObj(m.counts) || typeof m.checksum !== 'string') {
+    return { ok: false, errors: ['Struktur backup tidak lengkap.'] };
+  }
+  if (m.counts.products !== d.products.length || m.counts.transactions !== d.transactions.length || m.counts.attachments !== d.attachments.length) {
+    return { ok: false, errors: ['Jumlah data tidak cocok dengan catatan di berkas. Berkas terpotong atau diubah.'] };
+  }
+  if (await sha256fn(JSON.stringify(d)) !== m.checksum) {
+    return { ok: false, errors: ['Checksum tidak cocok. Berkas rusak atau sudah diubah.'] };
+  }
+  const biz = isObj(d.settings) && isStr(d.settings.biz, 40) ? d.settings.biz : '';
+
+  const prodIds = new Set();
+  for (const p of d.products) {
+    if (!isObj(p) || !isStr(p.id, 80) || !p.id || !isStr(p.name, 60) || !p.name.trim() || !isInt(p.price, 1) || typeof p.active !== 'boolean' || !isStr(p.category == null ? '' : p.category, 30)) { err('Ada produk yang datanya tidak valid.'); continue; }
+    if (prodIds.has(p.id)) { err('ID produk ganda: ' + p.id); continue; }
+    prodIds.add(p.id);
+  }
+
+  const METHODS_OK = ['cash', 'qris', 'transfer'], PAY_OK = ['paid', 'pending', 'verified'], TS_OK = ['completed', 'void'], PHOTO_OK = ['none', 'stored', 'deleted'];
+  const txProblem = t => {
+    if (!isInt(t.createdAt, 1)) return 'waktu';
+    if (!METHODS_OK.includes(t.paymentMethod)) return 'metode bayar';
+    if (!PAY_OK.includes(t.paymentStatus)) return 'status bayar';
+    if (!TS_OK.includes(t.transactionStatus)) return 'status transaksi';
+    if (!PHOTO_OK.includes(t.photoState)) return 'status foto';
+    if (!isInt(t.total, 0) || !isInt(t.subtotal, 0) || !isInt(t.discount == null ? 0 : t.discount, 0)) return 'nominal';
+    if (!Array.isArray(t.items) || !t.items.length || t.items.length > 500) return 'item';
+    let sum = 0;
+    for (const i of t.items) {
+      if (!isObj(i) || !isStr(i.productNameSnapshot, 60) || !isInt(i.unitPriceSnapshot, 0) || !isInt(i.quantity, 1) || i.lineSubtotal !== i.unitPriceSnapshot * i.quantity) return 'baris item';
+      sum += i.lineSubtotal;
+    }
+    if (sum !== t.subtotal || t.total !== t.subtotal - (t.discount || 0)) return 'total tidak cocok dengan item';
+    if (t.paymentMethod === 'cash') {
+      if (t.paymentStatus !== 'paid') return 'tunai harus berstatus lunas';
+      if (!isInt(t.cashReceived, t.total) || t.change !== t.cashReceived - t.total) return 'uang diterima/kembalian';
+    } else if (t.paymentStatus === 'paid') return 'non-tunai tidak boleh langsung lunas';
+    if (t.notes != null && !isStr(t.notes, 300)) return 'catatan';
+    return null;
+  };
+  const txById = new Map();
+  for (const t of d.transactions) {
+    if (!isObj(t) || !isStr(t.id, 80) || !t.id) { err('Ada transaksi tanpa ID.'); continue; }
+    if (txById.has(t.id)) { err('ID transaksi ganda: ' + t.id); continue; }
+    const bad = txProblem(t);
+    if (bad) { err('Transaksi ' + t.id + ' tidak valid (' + bad + ').'); continue; }
+    txById.set(t.id, t);
+  }
+
+  const attTx = new Set();
+  const attachments = [];
+  for (const a of d.attachments) {
+    if (!isObj(a) || !isStr(a.id, 90) || !isStr(a.transactionId, 80)) { err('Ada foto yang datanya tidak valid.'); continue; }
+    const t = txById.get(a.transactionId);
+    if (!t) { err('Foto ' + a.id + ' tidak punya transaksi.'); continue; }
+    if (a.id !== 'A-' + a.transactionId) { err('ID foto tidak sesuai: ' + a.id); continue; }
+    if (attTx.has(a.transactionId)) { err('Foto ganda untuk transaksi ' + a.transactionId); continue; }
+    attTx.add(a.transactionId);
+    if (t.photoState !== 'stored') err('Status foto transaksi ' + t.id + ' tidak cocok.');
+    if (a.mimeType !== 'image/jpeg') { err('Format foto ' + a.id + ' tidak didukung.'); continue; }
+    if (typeof a.dataBase64 !== 'string' || !a.dataBase64 || a.dataBase64.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(a.dataBase64)) { err('Isi foto ' + a.id + ' rusak.'); continue; }
+    let bytes;
+    try { bytes = b64ToBytes(a.dataBase64); } catch (e) { err('Isi foto ' + a.id + ' rusak.'); continue; }
+    if (!isInt(a.sizeBytes, 1) || bytes.length !== a.sizeBytes) { err('Ukuran foto ' + a.id + ' tidak cocok.'); continue; }
+    if (bytes.length > 1024 * 1024) { err('Foto ' + a.id + ' terlalu besar.'); continue; }
+    if (!(bytes[0] === 0xFF && bytes[1] === 0xD8 && bytes[2] === 0xFF)) { err('Foto ' + a.id + ' bukan JPEG yang utuh.'); continue; }
+    attachments.push({ id: a.id, transactionId: a.transactionId, mimeType: 'image/jpeg', sizeBytes: bytes.length, createdAt: isInt(a.createdAt, 0) ? a.createdAt : Date.now(), bytes });
+  }
+  for (const t of txById.values()) if (t.photoState === 'stored' && !attTx.has(t.id)) err('Transaksi ' + t.id + ' bertanda ada foto, tapi fotonya tidak ada di backup.');
+
+  if (errors.length) return { ok: false, errors };
+  return { ok: true, errors: [], manifest: m, biz, products: d.products, transactions: [...txById.values()], attachments };
 }
 function dateKey(ts) {
   const d = new Date(ts);
@@ -289,20 +395,29 @@ function statusInfo(t) {
   return { label: 'Lunas', cls: 'ok' };
 }
 function openModal(html) { sheet.innerHTML = html; modal.hidden = false; }
+let pendingConfirm = null;   // resolver dialog konfirmasi yang sedang terbuka
+let restoring = false;       // true saat berkas backup diperiksa atau dipulihkan
+let restorePlan = null;
 function closeModal() {
   modal.hidden = true; sheet.innerHTML = '';
   modalUrls.forEach(u => URL.revokeObjectURL(u)); modalUrls = [];
   if (co && co.photo) URL.revokeObjectURL(co.photo.url);
-  co = null;
+  co = null; restorePlan = null;
+  // Dialog ditutup dengan cara apa pun: janji konfirmasi selalu diselesaikan.
+  if (pendingConfirm) { const r = pendingConfirm; pendingConfirm = null; r({ ok: false, dismissed: true }); }
 }
 function confirmModal({ title, text, ok, danger, input }) {
   return new Promise(resolve => {
+    if (pendingConfirm) pendingConfirm({ ok: false, dismissed: true });
+    pendingConfirm = resolve;
+    const done = r => { if (pendingConfirm === resolve) pendingConfirm = null; resolve(r); };
+    modal.hidden = false;
     sheet.innerHTML = `<h2>${esc(title)}</h2><p>${text}</p>` +
       (input ? `<label>${esc(input)}<input type="text" id="cfIn" maxlength="120"></label>` : '') +
       `<div class="row"><button class="btn ghost" id="cfNo" type="button">Kembali</button>` +
       `<button class="btn ${danger ? 'danger' : 'primary'}" id="cfYes" type="button">${esc(ok)}</button></div>`;
-    $('#cfNo').onclick = () => resolve({ ok: false });
-    $('#cfYes').onclick = () => resolve({ ok: true, text: input ? $('#cfIn').value.trim() : '' });
+    $('#cfNo').onclick = () => done({ ok: false });
+    $('#cfYes').onclick = () => done({ ok: true, text: input ? $('#cfIn').value.trim() : '' });
   });
 }
 
@@ -555,6 +670,26 @@ async function openTx(id) {
     (t.transactionStatus !== 'void' ? `<button class="btn danger" data-act="voidTx" data-id="${esc(id)}" type="button">Batalkan transaksi</button>` : '') +
     `<button class="btn ghost" data-act="closeModal" type="button">Tutup</button></div>`);
 }
+// Ubah satu transaksi secara atomik: baca, periksa status terbaru, tulis, semua dalam satu transaksi database.
+function updateTx(id, blocker, mutate) {
+  return new Promise((resolve, reject) => {
+    const t = db.transaction(['transactions'], 'readwrite');
+    const store = t.objectStore('transactions');
+    let result = { changed: false, message: 'Transaksi tidak ditemukan.' };
+    const rq = store.get(id);
+    rq.onsuccess = () => {
+      const tx = rq.result;
+      const msg = blocker(tx);
+      if (msg) { result = { changed: false, message: msg }; return; }
+      mutate(tx);
+      store.put(tx);
+      result = { changed: true, tx };
+    };
+    t.oncomplete = () => resolve(result);
+    t.onerror = () => reject(t.error);
+    t.onabort = () => reject(t.error || new Error('Dibatalkan'));
+  });
+}
 async function afterTxChange(id) { await openTx(id); if (ui.tab === 'transaksi') renderTransaksi(); if (ui.tab === 'laporan') renderLaporan(); }
 
 /* ---------- Produk ---------- */
@@ -633,9 +768,12 @@ async function renderSetelan() {
       <p class="muted" id="bkInfo"></p>
       <p class="hint">Data tersimpan hanya di perangkat ini. Kalau HP atau iPad hilang atau data browser terhapus, data ikut hilang. Backup tiap minggu dan simpan berkasnya di tempat lain (Drive, WhatsApp ke diri sendiri, flashdisk).</p>
       <div class="row"><button class="btn primary" data-act="backup" type="button" id="bkBtn">Buat backup sekarang</button></div>
-      <p class="muted" style="font-size:.85rem">Pemulihan dari backup belum ada di versi ini. Berkas backup berisi semua transaksi dan foto, jadi simpan baik-baik.</p></div>
+      <p class="muted" style="font-size:.85rem">Berkas backup berisi semua transaksi dan foto, jadi simpan baik-baik.</p></div>
+    <div class="card"><h3>Pulihkan dari backup</h3>
+      <p class="muted">Pilih berkas backup (.json) dari Files. Isinya diperiksa penuh dulu, lalu Anda lihat ringkasannya sebelum ada yang berubah. Data yang sudah ada di perangkat tidak dihapus dan tidak ditimpa.</p>
+      <label class="btn" style="margin:0;align-items:center;color:var(--ink)" id="restoreLbl">Pilih berkas backup<input type="file" id="restoreIn" hidden></label></div>
     <div class="card"><h3>Penyimpanan</h3><p class="muted" id="stInfo">Memeriksa…</p></div>
-    <div class="card"><h3>Tentang</h3><p class="muted">KasirLokal 0.1. Gratis, tanpa akun, tanpa server. Tanpa jaminan: pemakai bertanggung jawab atas backup datanya. Foto bukti bukan verifikasi pembayaran.</p></div></div>`;
+    <div class="card"><h3>Tentang</h3><p class="muted">KasirLokal ${VERSION}. Gratis, tanpa akun, tanpa server. Tanpa jaminan: pemakai bertanggung jawab atas backup datanya. Foto bukti bukan verifikasi pembayaran.</p></div></div>`;
   const last = settings.lastBackupAt;
   $('#bkInfo').textContent = last ? `Backup terakhir: ${fmtDate(last)}, ${fmtTime(last)}.` : 'Belum pernah backup.';
   let st = persistGranted === true ? 'Penyimpanan permanen: aktif. ' : persistGranted === false ? 'Penyimpanan permanen: belum diberikan browser. Pasang aplikasi ke layar utama (Bagikan > Tambah ke Layar Utama) supaya data lebih aman. ' : '';
@@ -683,10 +821,116 @@ async function doBackup() {
     const r = await confirmModal({ title: 'Berkas sudah tersimpan?', ok: 'Ya, sudah tersimpan',
       text: `Backup lolos pemeriksaan (${c.transactions} transaksi, ${c.attachments} foto, ${Math.round(text.length / 1024)} KB). Cek di aplikasi Files, folder Unduhan, berkas <b>${esc(name)}</b>. Tanggal backup baru dicatat setelah Anda konfirmasi.` });
     if (r.ok) { settings.lastBackupAt = Date.now(); await putOne('settings', { key: 'lastBackupAt', value: settings.lastBackupAt }); toast('Backup dicatat.'); }
+    else toast('Backup belum dicatat karena belum dikonfirmasi.');
     closeModal();
   } catch (e) {
     toast('Backup gagal: ' + e.message);
   } finally { if (ui.tab === 'setelan') renderSetelan(); renderBanner(); }
+}
+
+/* ---------- Pulihkan dari backup ---------- */
+const readText = file => new Promise((res, rej) => {
+  const r = new FileReader();
+  r.onload = () => res(String(r.result));
+  r.onerror = () => rej(r.error || new Error('Berkas tidak bisa dibaca.'));
+  r.readAsText(file);
+});
+const cleanProduct = p => ({ id: p.id, name: p.name.trim(), category: p.category || '', price: p.price, active: p.active,
+  createdAt: Number.isInteger(p.createdAt) ? p.createdAt : Date.now(), updatedAt: Number.isInteger(p.updatedAt) ? p.updatedAt : Date.now() });
+const cleanTx = t => {
+  const o = {
+    id: t.id, createdAt: t.createdAt, subtotal: t.subtotal, discount: t.discount || 0, total: t.total,
+    paymentMethod: t.paymentMethod, paymentStatus: t.paymentStatus, transactionStatus: t.transactionStatus,
+    cashReceived: t.cashReceived == null ? null : t.cashReceived, change: t.change == null ? null : t.change,
+    notes: t.notes || '', photoState: t.photoState,
+    items: t.items.map(i => ({ productId: typeof i.productId === 'string' ? i.productId : '', productNameSnapshot: i.productNameSnapshot,
+      unitPriceSnapshot: i.unitPriceSnapshot, quantity: i.quantity, lineSubtotal: i.lineSubtotal }))
+  };
+  if (Number.isInteger(t.verifiedAt)) o.verifiedAt = t.verifiedAt;
+  if (t.transactionStatus === 'void') { o.voidedAt = Number.isInteger(t.voidedAt) ? t.voidedAt : t.createdAt; o.voidReason = typeof t.voidReason === 'string' ? t.voidReason.slice(0, 120) : ''; }
+  return o;
+};
+function showRestoreError(list) {
+  restoring = false; restorePlan = null;
+  openModal(`<h2>Backup tidak bisa dipakai</h2><p>Data di perangkat ini tidak diubah sama sekali.</p><ul>${list.map(x => `<li>${esc(x)}</li>`).join('')}</ul>
+    <div class="row"><button class="btn primary" data-act="restoreClose" type="button">Tutup</button></div>`);
+}
+async function startRestore(file) {
+  if (restoring) return;
+  restoring = true;
+  openModal('<h2>Memeriksa backup…</h2><p class="muted">Isi berkas diperiksa dulu. Data di perangkat belum diubah.</p>');
+  let parsed;
+  try {
+    if (file.size > 150 * 1024 * 1024) throw new Error('Berkas terlalu besar (maks 150 MB).');
+    const text = await readText(file);
+    try { parsed = JSON.parse(text); } catch (e) { throw new Error('Berkas rusak atau terpotong, bukan backup yang utuh.'); }
+  } catch (e) { return showRestoreError([e.message || 'Berkas tidak bisa dibaca.']); }
+  let v;
+  try { v = await validateBackup(parsed, sha256); } catch (e) { return showRestoreError(['Pemeriksaan gagal: ' + (e.message || e)]); }
+  if (!v.ok) return showRestoreError(v.errors);
+  parsed = null;
+  let curProds, curTxs;
+  try { [curProds, curTxs] = await Promise.all([getAll('products'), getAll('transactions')]); }
+  catch (e) { return showRestoreError(['Database di perangkat tidak bisa dibaca: ' + (e.message || e)]); }
+  const prodIds = new Set(curProds.map(p => p.id)), txIds = new Set(curTxs.map(t => t.id));
+  const dropSamples = curProds.length > 0 && curProds.every(p => p.sample) && curTxs.length === 0;
+  const newProds = v.products.filter(p => !prodIds.has(p.id)).map(cleanProduct);
+  const newTxs = v.transactions.filter(t => !txIds.has(t.id)).map(cleanTx);
+  const newTxIds = new Set(newTxs.map(t => t.id));
+  const newAtts = v.attachments.filter(a => newTxIds.has(a.transactionId));
+  const already = v.transactions.length - newTxs.length;
+  restorePlan = { newProds, newTxs, newAtts, dropSamples, sampleIds: curProds.filter(p => p.sample).map(p => p.id), biz: v.biz };
+  restoring = false;
+  const made = Date.parse(v.manifest.createdAt);
+  const head = `<h2>Pulihkan backup?</h2><p class="muted">Backup dibuat ${isNaN(made) ? 'pada waktu yang tidak tercatat' : fmtDate(made) + ', ' + fmtTime(made)}. Isinya ${v.transactions.length} transaksi, ${v.attachments.length} foto, ${v.products.length} produk. Berkas lolos semua pemeriksaan.</p>`;
+  if (!newTxs.length && !newProds.length && !dropSamples) {
+    openModal(head + `<p class="hint">Tidak ada data baru. Semua isi backup sudah ada di perangkat ini.</p><div class="row"><button class="btn primary" data-act="restoreClose" type="button">Tutup</button></div>`);
+    return;
+  }
+  openModal(head + `<div class="kv"><span>Transaksi akan ditambahkan</span><b class="num">${newTxs.length}</b></div>
+    <div class="kv"><span>Foto akan ditambahkan</span><b class="num">${newAtts.length}</b></div>
+    <div class="kv"><span>Produk akan ditambahkan</span><b class="num">${newProds.length}</b></div>
+    <div class="kv"><span class="muted">Transaksi sudah ada di perangkat</span><span class="num muted">${already}</span></div>
+    <p class="hint">Isi backup hanya ditambahkan. Data yang sudah ada di perangkat tidak diubah dan tidak dihapus.${dropSamples ? ' Produk contoh bawaan diganti dengan produk dari backup.' : ''}</p>
+    <div class="row"><button class="btn ghost" data-act="restoreClose" type="button">Batal</button><button class="btn primary" data-act="restoreGo" type="button">Pulihkan</button></div>`);
+}
+async function doRestore() {
+  const p = restorePlan; if (!p || restoring) return;
+  restoring = true;
+  sheet.innerHTML = '<h2>Memulihkan…</h2><p class="muted">Jangan tutup aplikasi.</p>';
+  try {
+    await run(['products', 'transactions', 'attachments', 'settings'], 'readwrite', t => {
+      const ps = t.objectStore('products'), ts = t.objectStore('transactions'), as = t.objectStore('attachments');
+      if (p.dropSamples) p.sampleIds.forEach(id => ps.delete(id));
+      p.newProds.forEach(x => ps.put(x));
+      p.newTxs.forEach(x => ts.put(x));
+      p.newAtts.forEach(a => as.put({ id: a.id, transactionId: a.transactionId, blob: new Blob([a.bytes], { type: 'image/jpeg' }),
+        mimeType: 'image/jpeg', sizeBytes: a.sizeBytes, createdAt: a.createdAt, localState: 'stored', backupId: null }));
+      if (p.biz && (!settings.biz || settings.biz === 'KasirLokal')) t.objectStore('settings').put({ key: 'biz', value: p.biz });
+    });
+  } catch (e) {
+    return showRestoreError(['Pemulihan dibatalkan dan data lama tetap utuh. Penyebab: ' + (e && (e.message || e.name) || 'tidak diketahui') + '. Kalau penyimpanan penuh, kosongkan ruang lalu coba lagi.']);
+  }
+  // Verifikasi: semua yang direncanakan harus benar-benar ada, foto terhubung ke transaksinya.
+  let problem = null;
+  try {
+    const [ps, ts, as] = await Promise.all([getAll('products'), getAll('transactions'), getAll('attachments')]);
+    const psI = new Set(ps.map(x => x.id)), tsM = new Map(ts.map(x => [x.id, x])), asM = new Map(as.map(x => [x.id, x]));
+    if (p.newProds.some(x => !psI.has(x.id))) problem = 'Ada produk yang belum masuk.';
+    else if (p.newTxs.some(x => !tsM.has(x.id))) problem = 'Ada transaksi yang belum masuk.';
+    else if (p.newAtts.some(a => { const r = asM.get(a.id); return !r || r.sizeBytes !== a.sizeBytes || !r.blob || r.blob.size !== a.sizeBytes; })) problem = 'Ada foto yang belum masuk utuh.';
+    else if (p.newTxs.some(x => x.photoState === 'stored' && !asM.has('A-' + x.id))) problem = 'Ada transaksi yang fotonya hilang.';
+    products = ps; txCount = ts.length;
+    const bz = (await getAll('settings')).find(s => s.key === 'biz'); if (bz) { settings.biz = bz.value; $('#biz').textContent = bz.value; }
+  } catch (e) { problem = 'Verifikasi tidak bisa dijalankan: ' + (e.message || e); }
+  restoring = false; restorePlan = null;
+  for (const id of [...cart.keys()]) if (!products.some(x => x.id === id)) cart.delete(id);
+  if (problem) {
+    openModal(`<h2>Pulihan perlu dicek</h2><p>${esc(problem)} Coba pulihkan lagi dari berkas yang sama. Data yang sudah ada tidak akan dobel.</p><div class="row"><button class="btn primary" data-act="restoreClose" type="button">Tutup</button></div>`);
+  } else {
+    openModal(`<h2>Pemulihan selesai</h2><p>Ditambahkan: ${p.newTxs.length} transaksi, ${p.newAtts.length} foto, ${p.newProds.length} produk. Sudah diperiksa ulang dan semua cocok.</p><div class="row"><button class="btn primary" data-act="restoreClose" type="button">Tutup</button></div>`);
+  }
+  cartChanged(); renderBanner();
 }
 
 /* ---------- Event ---------- */
@@ -710,19 +954,23 @@ const handlers = {
   txAllDates: () => { ui.txDate = ''; renderTransaksi(); },
   openTx: b => openTx(b.dataset.id),
   verifyTx: async b => {
-    const t = await getOne('transactions', b.dataset.id);
-    t.paymentStatus = 'verified'; t.verifiedAt = Date.now();
-    try { await putOne('transactions', t); toast('Ditandai terverifikasi.'); } catch (e) { toast('Gagal menyimpan.'); }
-    afterTxChange(t.id);
+    const id = b.dataset.id;
+    try {
+      const r = await updateTx(id, verifyBlocker, t => { t.paymentStatus = 'verified'; t.verifiedAt = Date.now(); });
+      toast(r.changed ? 'Ditandai terverifikasi.' : r.message);
+    } catch (e) { toast('Gagal menyimpan.'); }
+    afterTxChange(id);
   },
   voidTx: async b => {
     const id = b.dataset.id;
     const r = await confirmModal({ title: 'Batalkan transaksi?', danger: true, ok: 'Ya, batalkan', input: 'Alasan (opsional)',
       text: 'Transaksi tetap tercatat dengan status Batal dan tidak dihitung di laporan. Tidak bisa diurungkan.' });
+    if (r.dismissed) return;   // dialog ditutup lewat klik di luar: tidak ada yang berubah
     if (r.ok) {
-      const t = await getOne('transactions', id);
-      t.transactionStatus = 'void'; t.voidedAt = Date.now(); t.voidReason = r.text;
-      try { await putOne('transactions', t); toast('Transaksi dibatalkan.'); } catch (e) { toast('Gagal menyimpan.'); }
+      try {
+        const u = await updateTx(id, voidBlocker, t => { t.transactionStatus = 'void'; t.voidedAt = Date.now(); t.voidReason = r.text; });
+        toast(u.changed ? 'Transaksi dibatalkan.' : u.message);
+      } catch (e) { toast('Gagal menyimpan.'); }
     }
     afterTxChange(id);
   },
@@ -731,24 +979,28 @@ const handlers = {
     const backedUp = settings.lastBackupAt && att && settings.lastBackupAt >= att.createdAt;
     const r = await confirmModal({ title: 'Hapus foto?', danger: true, ok: backedUp ? 'Hapus foto' : 'Hapus tanpa backup',
       text: (backedUp ? 'Foto sudah tercakup di backup terakhir. ' : '<b>Foto ini belum ada di backup mana pun.</b> ') + 'Transaksinya tetap ada. Foto yang dihapus tidak bisa dikembalikan dari aplikasi ini.' });
+    if (r.dismissed) return;
     if (r.ok) {
       try {
         await run(['transactions', 'attachments'], 'readwrite', t => {
           t.objectStore('attachments').delete('A-' + id);
           const rq = t.objectStore('transactions').get(id);
-          rq.onsuccess = () => { const tx = rq.result; tx.photoState = 'deleted'; t.objectStore('transactions').put(tx); };
+          rq.onsuccess = () => { const tx = rq.result; if (tx) { tx.photoState = 'deleted'; t.objectStore('transactions').put(tx); } };
         });
         toast('Foto dihapus.');
       } catch (e) { toast('Gagal menghapus foto.'); }
     }
     afterTxChange(id);
   },
+  restoreGo: doRestore,
+  restoreClose: () => { closeModal(); if (ui.tab === 'setelan') renderSetelan(); },
   prodNew: () => openProductForm(null),
   prodEdit: b => openProductForm(products.find(p => p.id === b.dataset.id)),
   prodSave: b => saveProduct(b.dataset.id),
   prodDelete: async b => {
     const id = b.dataset.id; const p = products.find(x => x.id === id);
     const r = await confirmModal({ title: 'Hapus produk?', danger: true, ok: 'Hapus', text: `<b>${esc(p.name)}</b> dihapus dari daftar. Transaksi lama tidak berubah. Alternatif: matikan "Tampil di layar kasir".` });
+    if (r.dismissed) return;
     if (r.ok) { cart.delete(id); await run(['products'], 'readwrite', t => t.objectStore('products').delete(id)); products = await getAll('products'); closeModal(); cartChanged(); renderProduk(); }
     else openProductForm(p);
   },
@@ -763,7 +1015,7 @@ const handlers = {
 document.addEventListener('click', e => {
   const b = e.target.closest('[data-act]');
   if (b) { const h = handlers[b.dataset.act]; if (h) h(b, e); return; }
-  if (e.target === modal && !(co && co.saving)) closeModal();
+  if (e.target === modal && !(co && co.saving) && !restoring) closeModal();
 });
 document.addEventListener('input', e => {
   const k = e.target.dataset && e.target.dataset.input; if (!k) return;
@@ -775,6 +1027,11 @@ document.addEventListener('input', e => {
   else if (k === 'repDate') { ui.repDate = e.target.value || dateKey(Date.now()); renderLaporan(); }
 });
 document.addEventListener('change', async e => {
+  if (e.target.id === 'restoreIn') {
+    const f = e.target.files && e.target.files[0];
+    if (f) startRestore(f);
+    return;
+  }
   if (e.target.id !== 'photoIn' || !co) return;
   const file = e.target.files && e.target.files[0]; if (!file) return;
   if (co.photo) { URL.revokeObjectURL(co.photo.url); co.photo = null; }
@@ -806,7 +1063,7 @@ async function init() {
     if (!products.length && !settings.seeded) {
       const now = Date.now();
       const seed = [['Es Kopi Susu', 'Minuman', 18000], ['Es Cokelat', 'Minuman', 20000], ['Kentang Goreng', 'Makanan', 15000]]
-        .map(([name, category, price]) => ({ id: uid('P'), name, category, price, active: true, createdAt: now, updatedAt: now }));
+        .map(([name, category, price]) => ({ id: uid('P'), name, category, price, active: true, sample: true, createdAt: now, updatedAt: now }));
       await run(['products', 'settings'], 'readwrite', t => { seed.forEach(p => t.objectStore('products').put(p)); t.objectStore('settings').put({ key: 'seeded', value: true }); });
       settings.seeded = true; products = await getAll('products');
       toast('Produk contoh ditambahkan. Ganti di tab Produk.');
