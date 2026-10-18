@@ -53,6 +53,14 @@ h3{font-size:1rem}
 .banner.bad{background:var(--bad-bg);color:var(--bad)}
 .banner.info{background:var(--accent-soft);color:var(--accent)}
 .banner+.banner{margin-top:8px}
+.hintcard{margin-bottom:12px}
+details.guide summary{font-weight:700;cursor:pointer;min-height:44px;display:flex;align-items:center;justify-content:space-between;list-style:none}
+details.guide summary::-webkit-details-marker{display:none}
+details.guide summary::after{content:"+";font-size:1.4rem;font-weight:400;color:var(--accent);padding:0 4px}
+details.guide[open] summary::after{content:"\2212"}
+.guide-body h4{margin:16px 0 4px;font-size:1rem}
+.guide-body p,.guide-body li{color:var(--muted);margin:4px 0}
+.guide-body ol,.guide-body ul{margin:4px 0;padding-left:22px}
 main{flex:1;overflow:auto;padding:12px max(16px,env(safe-area-inset-left)) 16px max(16px,env(safe-area-inset-right));-webkit-overflow-scrolling:touch}
 .tabs{display:grid;grid-template-columns:repeat(5,1fr);background:var(--surface);border-top:1px solid var(--line);
   padding-bottom:env(safe-area-inset-bottom)}
@@ -181,7 +189,7 @@ td.r,th.r{text-align:right}
 
 <script>
 /*LOGIC-START*/
-const VERSION = '0.3';
+const VERSION = '0.4';
 const METHODS = { cash: 'Tunai', qris: 'QRIS', transfer: 'Transfer' };
 const fmtNum = n => new Intl.NumberFormat('id-ID').format(Math.trunc(n));
 const rupiah = n => 'Rp' + fmtNum(n);
@@ -399,6 +407,26 @@ function statusInfo(t) {
 function openModal(html) { sheet.innerHTML = html; modal.hidden = false; }
 let pendingConfirm = null;   // resolver dialog konfirmasi yang sedang terbuka
 let updateReady = false;     // service worker baru sudah mengambil alih: tawarkan muat ulang
+let deferredInstall = null;  // event "beforeinstallprompt" (Chrome Android/desktop)
+
+/* ---------- Petunjuk pasang ---------- */
+const isStandalone = () => window.navigator.standalone === true || !!(window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent || '') || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isAndroid = () => /Android/.test(navigator.userAgent || '');
+const HINT_KEY = 'kl-hint-v1';
+const hintDismissed = () => { try { return localStorage.getItem(HINT_KEY) === '1'; } catch (e) { return false; } };
+const dismissHint = () => { try { localStorage.setItem(HINT_KEY, '1'); } catch (e) { /* abaikan */ } };
+function installHint() {
+  if (isStandalone() || hintDismissed()) return '';
+  const steps = isIOS()
+    ? 'Ketuk <b>Bagikan</b> (kotak dengan panah ke atas), lalu <b>Tambah ke Layar Utama</b>. Lakukan ini <b>sebelum</b> mulai mencatat penjualan: data di tab Safari tidak ikut pindah ke app yang terpasang.'
+    : isAndroid()
+      ? 'Ketuk menu <b>⋮</b> di Chrome, lalu <b>Pasang aplikasi</b> atau <b>Tambahkan ke layar utama</b>.'
+      : 'iPhone/iPad: Bagikan, lalu Tambah ke Layar Utama. Android (Chrome): menu ⋮, lalu Pasang aplikasi.';
+  return `<div class="card hintcard" id="installHint"><b>Pasang ke layar utama</b>
+    <p class="muted" style="margin:6px 0 10px">${steps} Setelah terpasang, KasirLokal terbuka seperti aplikasi biasa dan datanya lebih aman dari pembersihan browser.</p>
+    <div class="row" style="margin-top:0">${deferredInstall ? '<button class="btn primary" data-act="installApp" type="button">Pasang sekarang</button>' : ''}<button class="btn" data-act="hintClose" type="button">Mengerti</button></div></div>`;
+}
 let restoring = false;       // true saat berkas backup diperiksa atau dipulihkan
 let restorePlan = null;
 function closeModal() {
@@ -448,7 +476,7 @@ function renderBanner() {
 /* ---------- Kasir ---------- */
 function activeProducts() { return products.filter(p => p.active); }
 function renderKasir() {
-  view.innerHTML = `<div class="pos"><section><div class="tools">
+  view.innerHTML = installHint() + `<div class="pos"><section><div class="tools">
     <input type="search" id="q" placeholder="Cari produk" value="${esc(ui.search)}" data-input="search" autocomplete="off">
     <div class="chips" id="cats"></div></div><div class="grid" id="grid"></div></section>
     <aside class="cart" id="cart"></aside></div>`;
@@ -768,6 +796,20 @@ async function exportCsv(all) {
 /* ---------- Setelan & Backup ---------- */
 async function renderSetelan() {
   view.innerHTML = `<div class="stack">
+    <details class="card guide"><summary>Panduan singkat</summary><div class="guide-body">
+      <h4>Jual tunai</h4>
+      <ol><li>Tab Kasir: ketuk produk. Ketuk lagi untuk menambah jumlah.</li><li>Ketuk Bayar, pilih Tunai, isi uang diterima atau ketuk "Uang pas".</li><li>Ketuk Simpan transaksi. Kembalian tampil di layar.</li></ol>
+      <h4>QRIS atau transfer</h4>
+      <ul><li>Pilih QRIS atau Transfer saat Bayar. Transaksi tersimpan sebagai Pending.</li><li>Cek sendiri uang masuk di aplikasi bank atau e-wallet. Lalu buka tab Transaksi, ketuk transaksinya, ketuk "Tandai terverifikasi".</li><li>Foto bukti itu opsional dan hanya catatan. Foto tidak membuktikan uang sudah masuk.</li></ul>
+      <h4>Salah catat</h4>
+      <p>Tab Transaksi, ketuk transaksinya, lalu "Batalkan transaksi". Transaksi tidak dihapus. Ia tetap tercatat sebagai Batal dan tidak dihitung di laporan.</p>
+      <h4>Produk dan harga</h4>
+      <p>Tab Produk: tambah, ubah, atau matikan produk. Mengubah harga tidak mengubah transaksi yang sudah lewat.</p>
+      <h4>Laporan</h4>
+      <p>Tab Laporan menampilkan ringkasan per tanggal. "Ekspor CSV" menghasilkan berkas untuk Excel atau Google Sheets.</p>
+      <h4>Backup (penting)</h4>
+      <ul><li>Data hanya ada di perangkat ini, tidak ada server. Kalau HP hilang atau rusak, data ikut hilang.</li><li>Seminggu sekali: Setelan, Buat backup sekarang, lalu simpan berkasnya di tempat lain (Google Drive atau kirim ke WhatsApp sendiri).</li><li>HP baru: pasang app, buka Setelan, Pilih berkas backup, lalu Pulihkan.</li></ul>
+      <p>KasirLokal gratis dan tanpa jaminan. Backup adalah tanggung jawab pemakai.</p></div></details>
     <div class="card"><h3>Profil usaha</h3><label>Nama usaha<input type="text" id="bizIn" maxlength="40" value="${esc(settings.biz)}"></label>
       <button class="btn" data-act="bizSave" type="button">Simpan nama</button></div>
     <div class="card"><h3>Backup</h3>
@@ -782,8 +824,7 @@ async function renderSetelan() {
     <div class="card"><h3>Tentang</h3><p class="muted">KasirLokal ${VERSION}. Gratis, tanpa akun, tanpa server. Tanpa jaminan: pemakai bertanggung jawab atas backup datanya. Foto bukti bukan verifikasi pembayaran.</p></div></div>`;
   const last = settings.lastBackupAt;
   $('#bkInfo').textContent = last ? `Backup terakhir: ${fmtDate(last)}, ${fmtTime(last)}.` : 'Belum pernah backup.';
-  const standalone = window.navigator.standalone === true || (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
-  let st = standalone
+  let st = isStandalone()
     ? (persistGranted === true ? 'Penyimpanan permanen: aktif. ' : '') + 'Terpasang di layar utama. Data app seperti ini biasanya tidak dibersihkan otomatis oleh browser, tapi tetap backup tiap minggu. '
     : 'Dibuka di browser, bukan dari layar utama. Browser bisa menghapus data situs yang lama tidak dibuka, dan data di sini terpisah dari app layar utama. Pasang lewat Bagikan > Tambah ke Layar Utama, lalu pindahkan data lewat backup dan pulihkan. ';
   try {
@@ -1002,6 +1043,12 @@ const handlers = {
     afterTxChange(id);
   },
   reloadApp: () => location.reload(),
+  hintClose: () => { dismissHint(); const h = $('#installHint'); if (h) h.remove(); },
+  installApp: async () => {
+    const ev = deferredInstall; if (!ev) return;
+    try { await ev.prompt(); await ev.userChoice; } catch (e) { /* dibatalkan */ }
+    deferredInstall = null; if (ui.tab === 'kasir') renderKasir();
+  },
   restoreGo: doRestore,
   restoreClose: () => { closeModal(); if (ui.tab === 'setelan') renderSetelan(); },
   prodNew: () => openProductForm(null),
@@ -1058,6 +1105,11 @@ function netStatus() {
   n.className = 'net' + (on ? '' : ' off'); n.lastElementChild.textContent = on ? 'Siap' : 'Offline, tetap bisa jualan';
 }
 window.addEventListener('online', netStatus); window.addEventListener('offline', netStatus);
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault(); deferredInstall = e;
+  if (ui.tab === 'kasir' && $('#installHint') && !$('[data-act=installApp]')) renderKasir();
+});
+window.addEventListener('appinstalled', () => { deferredInstall = null; dismissHint(); const h = $('#installHint'); if (h) h.remove(); });
 
 /* ---------- Mulai ---------- */
 async function init() {
