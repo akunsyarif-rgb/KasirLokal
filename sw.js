@@ -1,6 +1,6 @@
 // KasirLokal service worker: aset aplikasi dari cache, diperbarui di latar belakang.
 // Naikkan V setiap rilis supaya perangkat mengambil berkas baru.
-const V = 'kasirlokal-v2';
+const V = 'kasirlokal-v3';
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {

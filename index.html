@@ -51,6 +51,8 @@ h3{font-size:1rem}
 .banner{margin:12px max(16px,env(safe-area-inset-left)) 0 max(16px,env(safe-area-inset-right));padding:10px 12px;border-radius:10px;
   background:var(--warn-bg);color:var(--warn);display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
 .banner.bad{background:var(--bad-bg);color:var(--bad)}
+.banner.info{background:var(--accent-soft);color:var(--accent)}
+.banner+.banner{margin-top:8px}
 main{flex:1;overflow:auto;padding:12px max(16px,env(safe-area-inset-left)) 16px max(16px,env(safe-area-inset-right));-webkit-overflow-scrolling:touch}
 .tabs{display:grid;grid-template-columns:repeat(5,1fr);background:var(--surface);border-top:1px solid var(--line);
   padding-bottom:env(safe-area-inset-bottom)}
@@ -179,7 +181,7 @@ td.r,th.r{text-align:right}
 
 <script>
 /*LOGIC-START*/
-const VERSION = '0.2';
+const VERSION = '0.3';
 const METHODS = { cash: 'Tunai', qris: 'QRIS', transfer: 'Transfer' };
 const fmtNum = n => new Intl.NumberFormat('id-ID').format(Math.trunc(n));
 const rupiah = n => 'Rp' + fmtNum(n);
@@ -396,6 +398,7 @@ function statusInfo(t) {
 }
 function openModal(html) { sheet.innerHTML = html; modal.hidden = false; }
 let pendingConfirm = null;   // resolver dialog konfirmasi yang sedang terbuka
+let updateReady = false;     // service worker baru sudah mengambil alih: tawarkan muat ulang
 let restoring = false;       // true saat berkas backup diperiksa atau dipulihkan
 let restorePlan = null;
 function closeModal() {
@@ -433,10 +436,13 @@ function renderBanner() {
   const b = $('#banner');
   const week = 7 * 24 * 3600 * 1000;
   const late = txCount > 0 && (!settings.lastBackupAt || Date.now() - settings.lastBackupAt > week);
+  let html = '';
+  if (updateReady) html += `<div class="banner info"><span>Versi baru KasirLokal sudah siap.</span><button class="btn sm" data-act="reloadApp" type="button">Muat ulang</button></div>`;
   if (late && ui.tab !== 'setelan') {
-    b.innerHTML = `<div class="banner"><span>${settings.lastBackupAt ? 'Backup terakhir lebih dari 7 hari lalu.' : 'Belum pernah backup.'} Data hanya ada di perangkat ini.</span>` +
+    html += `<div class="banner"><span>${settings.lastBackupAt ? 'Backup terakhir lebih dari 7 hari lalu.' : 'Belum pernah backup.'} Data hanya ada di perangkat ini.</span>` +
       `<button class="btn sm" data-act="tab" data-v="setelan" type="button">Backup sekarang</button></div>`;
-  } else b.innerHTML = '';
+  }
+  b.innerHTML = html;
 }
 
 /* ---------- Kasir ---------- */
@@ -776,7 +782,10 @@ async function renderSetelan() {
     <div class="card"><h3>Tentang</h3><p class="muted">KasirLokal ${VERSION}. Gratis, tanpa akun, tanpa server. Tanpa jaminan: pemakai bertanggung jawab atas backup datanya. Foto bukti bukan verifikasi pembayaran.</p></div></div>`;
   const last = settings.lastBackupAt;
   $('#bkInfo').textContent = last ? `Backup terakhir: ${fmtDate(last)}, ${fmtTime(last)}.` : 'Belum pernah backup.';
-  let st = persistGranted === true ? 'Penyimpanan permanen: aktif. ' : persistGranted === false ? 'Penyimpanan permanen: belum diberikan browser. Pasang aplikasi ke layar utama (Bagikan > Tambah ke Layar Utama) supaya data lebih aman. ' : '';
+  const standalone = window.navigator.standalone === true || (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+  let st = standalone
+    ? (persistGranted === true ? 'Penyimpanan permanen: aktif. ' : '') + 'Terpasang di layar utama. Data app seperti ini biasanya tidak dibersihkan otomatis oleh browser, tapi tetap backup tiap minggu. '
+    : 'Dibuka di browser, bukan dari layar utama. Browser bisa menghapus data situs yang lama tidak dibuka, dan data di sini terpisah dari app layar utama. Pasang lewat Bagikan > Tambah ke Layar Utama, lalu pindahkan data lewat backup dan pulihkan. ';
   try {
     if (navigator.storage && navigator.storage.estimate) {
       const e = await navigator.storage.estimate();
@@ -819,7 +828,7 @@ async function doBackup() {
     download(name, text, 'application/json');
     const c = manifest.counts;
     const r = await confirmModal({ title: 'Berkas sudah tersimpan?', ok: 'Ya, sudah tersimpan',
-      text: `Backup lolos pemeriksaan (${c.transactions} transaksi, ${c.attachments} foto, ${Math.round(text.length / 1024)} KB). Cek di aplikasi Files, folder Unduhan, berkas <b>${esc(name)}</b>. Tanggal backup baru dicatat setelah Anda konfirmasi.` });
+      text: `Backup lolos pemeriksaan (${c.transactions} transaksi, ${c.attachments} foto, ${Math.max(1, Math.round(text.length / 1024))} KB). Berkas <b>${esc(name)}</b> harus tersimpan di perangkat dulu.<br><br>Kalau muncul pratinjau berkas (iPad/iPhone): ketuk Bagikan, lalu Save to Files. Kalau berkas langsung diunduh: cek folder Unduhan.<br><br>Ketuk Ya hanya setelah berkasnya benar-benar ada di Files. Tanggal backup baru dicatat setelah itu.` });
     if (r.ok) { settings.lastBackupAt = Date.now(); await putOne('settings', { key: 'lastBackupAt', value: settings.lastBackupAt }); toast('Backup dicatat.'); }
     else toast('Backup belum dicatat karena belum dikonfirmasi.');
     closeModal();
@@ -992,6 +1001,7 @@ const handlers = {
     }
     afterTxChange(id);
   },
+  reloadApp: () => location.reload(),
   restoreGo: doRestore,
   restoreClose: () => { closeModal(); if (ui.tab === 'setelan') renderSetelan(); },
   prodNew: () => openProductForm(null),
@@ -1073,7 +1083,15 @@ async function init() {
   $('#biz').textContent = settings.biz || 'KasirLokal';
   try { if (navigator.storage && navigator.storage.persist) persistGranted = await navigator.storage.persist(); } catch (e) { /* abaikan */ }
   go('kasir');
-  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (hadController && !updateReady) { updateReady = true; renderBanner(); }
+    });
+    navigator.serviceWorker.register('sw.js').then(reg => {
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
+    }).catch(() => {});
+  }
 }
 init();
 </script>
